@@ -1,0 +1,30 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Environments
+.env
+.venv/
+venv/
+
+# IDE/editor
+.DS_Store
+.vscode/
+.idea/
+
+# Build/output
+dist/
+build/
+*.egg-info/
+
+# Data/artifacts
+data/
+datasets/
+openrouter_api_key.txt
+example_data.json
+show/
+
+# Checkpoints
+.ipynb_checkpoints/
