@@ -23,13 +23,18 @@ def get_data(
     num_samples=None,
     tokenizer=None,
 ):
-    """Stream a HF dataset and return randomly paired hyp/cand lists."""
-    if not streaming:
-        raise ValueError("This loader only supports streaming datasets")
+    """Load a HF dataset (streaming or not) and return randomly paired hyp/cand lists."""
 
     from datasets import load_dataset
 
-    ds = load_dataset(lang, config, split=split, streaming=True)
+    try:
+        ds = load_dataset(lang, config, split=split, streaming=streaming)
+    except Exception:
+        if streaming:
+            ds = load_dataset(lang, config, split=split, streaming=False)
+            streaming = False
+        else:
+            raise
     lines = []
 
     def push_line(s):
@@ -38,8 +43,12 @@ def get_data(
         if 0 < len(toks) < line_length_limit:
             lines.append(s)
 
+    ds_iter = iter(ds)
     # infer text field from first example
-    first = next(iter(ds))
+    try:
+        first = next(ds_iter)
+    except StopIteration:
+        raise ValueError("Dataset is empty")
     if text_field is None and isinstance(first, dict):
         if "text" in first:
             text_field = "text"
@@ -57,7 +66,7 @@ def get_data(
         push_line(first)
     count += 1
 
-    for ex in ds:
+    for ex in ds_iter:
         if count >= max_lines:
             break
         if text_field and isinstance(ex, dict) and text_field in ex:
@@ -108,7 +117,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hf-streaming",
         action="store_true",
-        help="Load the Hugging Face dataset in streaming mode (IterableDataset). Required by this script.",
+        help="Load the Hugging Face dataset in streaming mode (IterableDataset).",
     )
     parser.add_argument(
         "--hf-split",
@@ -159,9 +168,6 @@ if __name__ == "__main__":
     # Require an explicit HF dataset id (script now supports HF datasets only)
     if not args.hf_dataset:
         raise SystemExit("Please specify --hf-dataset <DATASET_ID> (this script expects a Hugging Face dataset id)")
-    if not args.hf_streaming:
-        raise SystemExit("Please enable --hf-streaming (this script only supports streaming datasets)")
-
     if not args.model:
         raise SystemExit("Please specify at least one model with -m/--model")
     
