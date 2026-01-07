@@ -53,11 +53,13 @@ def get_data(
         if len(toks) > line_length_limit:
             start = random.randint(0, len(toks) - line_length_limit)
             toks = toks[start : start + line_length_limit]
-        lines.append(
+        text_out = (
             tokenizer.convert_tokens_to_string(toks)
             if tokenizer is not None
             else " ".join(toks)
-        )
+        ).strip()
+        if text_out:
+            lines.append(text_out)
 
     ds_iter = iter(ds)
     # infer text field from first example
