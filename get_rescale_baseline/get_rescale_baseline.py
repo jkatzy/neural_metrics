@@ -58,8 +58,16 @@ def get_data(
             if tokenizer is not None
             else " ".join(toks)
         ).strip()
-        if text_out:
-            lines.append(text_out)
+        if not text_out:
+            return
+        token_check = (
+            tokenizer.encode(text_out, add_special_tokens=False)
+            if tokenizer is not None
+            else text_out.split()
+        )
+        if len(token_check) == 0:
+            return
+        lines.append(text_out)
 
     ds_iter = iter(ds)
     # infer text field from first example
