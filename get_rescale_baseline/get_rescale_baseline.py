@@ -3,6 +3,7 @@ import gzip
 import os
 import random
 from random import shuffle
+import gc
 
 import numpy as np
 import pandas as pd
@@ -47,9 +48,16 @@ def get_data(
     def push_line(s):
         s = s.strip()
         toks = tokenizer.tokenize(s) if tokenizer is not None else s.split()
-        start = random.randint(0, len(toks)-line_length_limit) if len(toks) > line_length_limit else 0
-        toks[start:start+line_length_limit]
-        lines.append(tokenizer.convert_tokens_to_string(toks) if tokenizer is not None else " ".join(toks))
+        if not toks:
+            return
+        if len(toks) > line_length_limit:
+            start = random.randint(0, len(toks) - line_length_limit)
+            toks = toks[start : start + line_length_limit]
+        lines.append(
+            tokenizer.convert_tokens_to_string(toks)
+            if tokenizer is not None
+            else " ".join(toks)
+        )
 
     ds_iter = iter(ds)
     # infer text field from first example
@@ -255,3 +263,6 @@ if __name__ == "__main__":
         os.makedirs(os.path.dirname(baseline_file_path), exist_ok=True)
         pd_baselines.to_csv(baseline_file_path)
         del scorer
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
