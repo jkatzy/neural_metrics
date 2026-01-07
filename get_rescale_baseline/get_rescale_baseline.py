@@ -3,42 +3,79 @@ import gzip
 import os
 from random import shuffle
 
-import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import sacrebleu
 import torch
 from tqdm.auto import tqdm
 
 import bert_score
+from transformers import AutoTokenizer
 
 
-def get_data(lang="en"):
+def get_data(
+    lang,
+    split="train",
+    text_field=None,
+    max_lines=1_000_000,
+    line_length_limit=32,
+    config=None,
+    streaming=True,
+    num_samples=None,
+    tokenizer=None,
+):
+    """Stream a HF dataset and return randomly paired hyp/cand lists."""
+    if not streaming:
+        raise ValueError("This loader only supports streaming datasets")
 
-    if lang == "en":
-        file_path = "data/news.2017.en.shuffled.deduped"
-    elif lang == "zh":
-        file_path = "data/paracrawl/crawl_chinese.txt"
-    else:
-        file_path = f"data/paracrawl/rand_{lang}.txt"
+    from datasets import load_dataset
 
-    with open(file_path, "r") as f:
-        lines = []
-        for i, line in enumerate(f):
-            if i == 1_000_000:
-                break
-            line = line.strip()
-            if len(line.split(" ")) < 32 and len(line.split(" ")) > 0:
-                lines.append(line)
+    ds = load_dataset(lang, config, split=split, streaming=True)
+    lines = []
 
-    samples = np.random.choice(
-        range(len(lines)), size=(2, len(lines) // 2), replace=False
-    )
+    def push_line(s):
+        s = s.strip()
+        toks = tokenizer.tokenize(s) if tokenizer is not None else s.split()
+        if 0 < len(toks) < line_length_limit:
+            lines.append(s)
 
+    # infer text field from first example
+    first = next(iter(ds))
+    if text_field is None and isinstance(first, dict):
+        if "text" in first:
+            text_field = "text"
+        else:
+            for k, v in first.items():
+                if isinstance(v, str):
+                    text_field = k
+                    break
+
+    count = 0
+    # include first record
+    if text_field and isinstance(first, dict) and text_field in first:
+        push_line(str(first[text_field]))
+    elif isinstance(first, str):
+        push_line(first)
+    count += 1
+
+    for ex in ds:
+        if count >= max_lines:
+            break
+        if text_field and isinstance(ex, dict) and text_field in ex:
+            push_line(str(ex[text_field]))
+        elif isinstance(ex, str):
+            push_line(ex)
+        count += 1
+
+    if len(lines) < 2:
+        raise ValueError("Not enough lines collected to produce hyp/cand pairs")
+
+    pair_count = num_samples if num_samples is not None else len(lines) // 2
+    if pair_count > len(lines) // 2:
+        raise ValueError("Requested more samples than available pairs")
+
+    samples = np.random.choice(range(len(lines)), size=(2, pair_count), replace=False)
     hyp = [lines[i] for i in samples[0]]
     cand = [lines[i] for i in samples[1]]
-
     return hyp, cand
 
 
@@ -51,47 +88,146 @@ def chunk(l, n):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process some integers.")
     parser.add_argument(
-        "--lang", type=str, required=True, help="language to compute baseline with"
+        "--lang",
+        type=str,
+        default="en",
+        help="language to compute baseline with (legacy local files)."
+    )
+    parser.add_argument(
+        "--hf-dataset",
+        type=str,
+        default=None,
+        help="Hugging Face dataset id or path (overrides --lang)."
+    )
+    parser.add_argument(
+        "--hf-config",
+        type=str,
+        default=None,
+        help="(Optional) Hugging Face dataset config name (passed as 'name' to load_dataset)."
+    )
+    parser.add_argument(
+        "--hf-streaming",
+        action="store_true",
+        help="Load the Hugging Face dataset in streaming mode (IterableDataset). Required by this script.",
+    )
+    parser.add_argument(
+        "--hf-split",
+        type=str,
+        default="train",
+        help="Split to use when loading a HF dataset (default: train)."
+    )
+    parser.add_argument(
+        "--text-field",
+        type=str,
+        default=None,
+        help="Name of the text field/column in the dataset (optional)."
+    )
+    parser.add_argument(
+        "--max-lines",
+        type=int,
+        default=1000000,
+        help="Maximum number of lines/examples to read (default: 1_000_000)."
+    )
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=None,
+        help="Number of hyp/ref pairs to score (default: use all available pairs).",
+    )
+    parser.add_argument(
+        "--num-layers",
+        type=int,
+        default=None,
+        help="Optional num_layers override for the model (helps unknown models).",
+    )
+    parser.add_argument(
+        "--use-fast-tokenizer",
+        action="store_false",
+        help="Use HF fast tokenizer (set this flag to disable fast tokenizers).",
+    )
+    parser.add_argument(
+        "--line-length-limit",
+        type=int,
+        default=32,
+        help="Maximum number of tokens per line to include in baseline data (default: 32)."
     )
     parser.add_argument("-m", "--model", nargs="+", help="models to tune")
     parser.add_argument("-b", "--batch_size", type=int, default=64)
 
     args = parser.parse_args()
 
-    hyp, cand = get_data(lang=args.lang)
+    # Require an explicit HF dataset id (script now supports HF datasets only)
+    if not args.hf_dataset:
+        raise SystemExit("Please specify --hf-dataset <DATASET_ID> (this script expects a Hugging Face dataset id)")
+    if not args.hf_streaming:
+        raise SystemExit("Please enable --hf-streaming (this script only supports streaming datasets)")
 
+    if not args.model:
+        raise SystemExit("Please specify at least one model with -m/--model")
+    
+    args.use_fast_tokenizer = False
+    
+    data_name = args.hf_dataset
+    config_label = args.hf_config if args.hf_config else "default"
+    baseline_dir = f"rescale_baseline/{data_name}/{config_label}"
+    # Determine which baselines need computing before loading any dataset to avoid
+    # unnecessary work (and potential crashes) when all outputs already exist.
+    todo_models = []
     for model_type in args.model:
-        baseline_file_path = f"rescale_baseline/{args.lang}/{model_type}.tsv"
+        baseline_file_path = f"{baseline_dir}/{model_type}.tsv"
         if os.path.isfile(baseline_file_path):
-            print(f"{model_type} baseline exists for {args.lang}")
-            continue
+            print(f"{model_type} baseline exists for {data_name} ({config_label})")
         else:
-            print(f"computing baseline for {model_type} on {args.lang}")
-            scorer = bert_score.BERTScorer(model_type=model_type, all_layers=True)
-            with torch.no_grad():
-                score_means = None
-                count = 0
-                for batches in tqdm(
-                    chunk(list(zip(hyp, cand)), 1000), total=len(hyp) / 1000
-                ):
-                    batch_hyp, batch_cand = zip(*batches)
-                    scores = scorer.score(
-                        batch_hyp, batch_cand, batch_size=args.batch_size
-                    )
-                    scores = torch.stack(scores, dim=0)
-                    if score_means is None:
-                        score_means = scores.mean(dim=-1)
-                    else:
-                        score_means = score_means * count / (
-                            count + len(batches)
-                        ) + scores.mean(dim=-1) * len(batches) / (count + len(batches))
-                    count += len(batches)
+            todo_models.append(model_type)
 
-            pd_baselines = pd.DataFrame(
-                score_means.numpy().transpose(), columns=["P", "R", "F"]
-            )
-            pd_baselines.index.name = "LAYER"
+    if not todo_models:
+        raise SystemExit("All requested baselines already exist; nothing to do.")
 
-            os.makedirs(os.path.dirname(baseline_file_path), exist_ok=True)
-            pd_baselines.to_csv(baseline_file_path)
-            del scorer
+    for model_type in todo_models:
+        baseline_file_path = f"{baseline_dir}/{model_type}.tsv"
+        print(f"computing baseline for {model_type} on {data_name} ({config_label})")
+        scorer = bert_score.BERTScorer(
+            model_type=model_type,
+            all_layers=True,
+            num_layers=args.num_layers,
+            use_fast_tokenizer=args.use_fast_tokenizer,
+        )
+
+        hyp, cand = get_data(
+            lang=args.hf_dataset,
+            split=args.hf_split,
+            text_field=args.text_field,
+            max_lines=args.max_lines,
+            line_length_limit=args.line_length_limit,
+            config=args.hf_config,
+            streaming=args.hf_streaming,
+            num_samples=args.num_samples,
+            tokenizer=AutoTokenizer.from_pretrained(model_type, use_fast=args.use_fast_tokenizer),
+        )
+        with torch.no_grad():
+            score_means = None
+            count = 0
+            for batches in tqdm(
+                chunk(list(zip(hyp, cand)), 1000), total=len(hyp) / 1000
+            ):
+                batch_hyp, batch_cand = zip(*batches)
+                scores = scorer.score(
+                    batch_hyp, batch_cand, batch_size=args.batch_size
+                )
+                scores = torch.stack(scores, dim=0)
+                if score_means is None:
+                    score_means = scores.mean(dim=-1)
+                else:
+                    score_means = score_means * count / (
+                        count + len(batches)
+                    ) + scores.mean(dim=-1) * len(batches) / (count + len(batches))
+                count += len(batches)
+
+        pd_baselines = pd.DataFrame(
+            score_means.numpy().transpose(), columns=["P", "R", "F"]
+        )
+        pd_baselines.index.name = "LAYER"
+
+        os.makedirs(os.path.dirname(baseline_file_path), exist_ok=True)
+        pd_baselines.to_csv(baseline_file_path)
+        del scorer

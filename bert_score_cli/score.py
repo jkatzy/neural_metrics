@@ -56,6 +56,42 @@ def main():
         help="whether to use HF fast tokenizer",
     )
     parser.add_argument(
+        "--strip-prefix",
+        type=str,
+        default="",
+        help="Optional prefix to remove from both candidates and references before scoring.",
+    )
+    parser.add_argument(
+        "--strip-suffix",
+        type=str,
+        default="",
+        help="Optional suffix to remove from both candidates and references before scoring.",
+    )
+    parser.add_argument(
+        "--strip-prefix-ref",
+        nargs="*",
+        default=None,
+        help="Optional prefix(es) to remove from references only (overrides --strip-prefix). Provide one per reference (or per group for multi-ref).",
+    )
+    parser.add_argument(
+        "--strip-suffix-ref",
+        nargs="*",
+        default=None,
+        help="Optional suffix(es) to remove from references only (overrides --strip-suffix). Provide one per reference (or per group for multi-ref).",
+    )
+    parser.add_argument(
+        "--strip-prefix-cand",
+        nargs="*",
+        default=None,
+        help="Optional prefix(es) to remove from candidates only (overrides --strip-prefix). Provide one per candidate.",
+    )
+    parser.add_argument(
+        "--strip-suffix-cand",
+        nargs="*",
+        default=None,
+        help="Optional suffix(es) to remove from candidates only (overrides --strip-suffix). Provide one per candidate.",
+    )
+    parser.add_argument(
         "-s",
         "--seg_level",
         action="store_true",
@@ -116,6 +152,12 @@ def main():
         rescale_with_baseline=args.rescale_with_baseline,
         baseline_path=args.baseline_path,
         use_fast_tokenizer=args.use_fast_tokenizer,
+        strip_prefix=args.strip_prefix,
+        strip_suffix=args.strip_suffix,
+        strip_prefix_ref=args.strip_prefix_ref,
+        strip_suffix_ref=args.strip_suffix_ref,
+        strip_prefix_cand=args.strip_prefix_cand,
+        strip_suffix_cand=args.strip_suffix_cand,
     )
     avg_scores = [s.mean(dim=0) for s in all_preds]
     P = avg_scores[0].cpu().item()

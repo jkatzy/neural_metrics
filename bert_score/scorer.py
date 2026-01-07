@@ -88,7 +88,11 @@ class BERTScorer:
             self._model_type = model_type
 
         if num_layers is None:
-            self._num_layers = model2layers[self.model_type]
+            if self.model_type in model2layers:
+                self._num_layers = model2layers[self.model_type]
+            else:
+                from transformers import AutoConfig
+                self._num_layers = int(0.75 * (AutoConfig.from_pretrained(self._model_type).num_hidden_layers))
         else:
             self._num_layers = num_layers
 

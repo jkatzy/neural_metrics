@@ -252,7 +252,14 @@ def get_model(model_type, num_layers, all_layers=None):
 
         model = T5EncoderModel.from_pretrained(model_type)
     else:
-        model = AutoModel.from_pretrained(model_type)
+        try:
+            model = AutoModel.from_pretrained(model_type, add_pooling_layer=False)
+        except TypeError as e:
+            # Some architectures (e.g., ModernBERT) do not accept add_pooling_layer
+            if "add_pooling_layer" in str(e):
+                model = AutoModel.from_pretrained(model_type)
+            else:
+                raise
     model.eval()
 
     if hasattr(model, "decoder") and hasattr(model, "encoder"):
@@ -331,6 +338,10 @@ def get_tokenizer(model_type, use_fast=False):
         assert not use_fast, "Fast tokenizer is not available for version < 4.0.0"
         tokenizer = AutoTokenizer.from_pretrained(model_type)
 
+    # Some tokenizers may return vocab_file=None; guard to avoid downstream attr errors.
+    if getattr(tokenizer, "vocab_file", None) is None:
+        tokenizer.vocab_file = ""
+
     return tokenizer
 
 
@@ -348,6 +359,11 @@ def padding(arr, pad_token, dtype=torch.long):
 def bert_encode(model, x, attention_mask, all_layers=False):
     model.eval()
     with torch.no_grad():
+        if model.loss_type == None:
+            model.loss_type = "CrossEntropyLoss"
+            out = model(
+                x, attention_mask=attention_mask, output_hidden_states=all_layers
+            )
         out = model(x, attention_mask=attention_mask, output_hidden_states=all_layers)
     if all_layers:
         emb = torch.stack(out[-1], dim=2)
@@ -411,6 +427,10 @@ def collate_idf(arr, tokenizer, idf_dict, device="cuda:0"):
     idf_weights = [[idf_dict[i] for i in a] for a in arr]
 
     pad_token = tokenizer.pad_token_id
+    if pad_token is None:
+        pad_token = getattr(tokenizer, "eos_token_id", None) or getattr(
+            tokenizer, "bos_token_id", None
+        ) or 0
 
     padded, lens, mask = padding(arr, pad_token, dtype=torch.long)
     padded_idf, _, _ = padding(idf_weights, 0, dtype=torch.float)
@@ -527,8 +547,10 @@ def greedy_cos_idf(
     word_precision = sim.max(dim=2)[0]
     word_recall = sim.max(dim=1)[0]
 
-    hyp_idf.div_(hyp_idf.sum(dim=1, keepdim=True))
-    ref_idf.div_(ref_idf.sum(dim=1, keepdim=True))
+    hyp_den = hyp_idf.sum(dim=1, keepdim=True).clamp_min(1e-9)
+    ref_den = ref_idf.sum(dim=1, keepdim=True).clamp_min(1e-9)
+    hyp_idf = hyp_idf / hyp_den
+    ref_idf = ref_idf / ref_den
     precision_scale = hyp_idf.to(word_precision.device)
     recall_scale = ref_idf.to(word_recall.device)
     if all_layers:
@@ -560,6 +582,7 @@ def greedy_cos_idf(
         )
         P = P.masked_fill(hyp_zero_mask, 0.0)
         R = R.masked_fill(hyp_zero_mask, 0.0)
+        F = F.masked_fill(hyp_zero_mask, 0.0)
 
     if torch.any(ref_zero_mask):
         print(
@@ -568,6 +591,7 @@ def greedy_cos_idf(
         )
         P = P.masked_fill(ref_zero_mask, 0.0)
         R = R.masked_fill(ref_zero_mask, 0.0)
+        F = F.masked_fill(ref_zero_mask, 0.0)
 
     F = F.masked_fill(torch.isnan(F), 0.0)
 
@@ -584,6 +608,10 @@ def bert_cos_score_idf(
     batch_size=64,
     device="cuda:0",
     all_layers=False,
+    ref_trim_heads=None,
+    ref_trim_tails=None,
+    hyp_trim_heads=None,
+    hyp_trim_tails=None,
 ):
     """
     Compute BERTScore.
@@ -625,12 +653,39 @@ def bert_cos_score_idf(
             idf = padded_idf[i, :sequence_len]
             stats_dict[sen] = (emb, idf)
 
-    def pad_batch_stats(sen_batch, stats_dict, device):
+    def pad_batch_stats(sen_batch, stats_dict, device, trim_heads=None, trim_tails=None):
         stats = [stats_dict[s] for s in sen_batch]
         emb, idf = zip(*stats)
-        emb = [e.to(device) for e in emb]
-        idf = [i.to(device) for i in idf]
-        lens = [e.size(0) for e in emb]
+        trim_heads = trim_heads or [0] * len(emb)
+        trim_tails = trim_tails or [0] * len(emb)
+        trimmed_emb = []
+        trimmed_idf = []
+        lens = []
+        for e, i, h, t in zip(emb, idf, trim_heads, trim_tails):
+            # embeddings include special tokens at positions 0 (CLS) and -1 (SEP)
+            seq_len = e.size(0)
+            content_len = max(seq_len - 2, 0)
+            h_clamped = min(h, content_len)
+            # prevent over-trimming tails beyond available content
+            t_clamped = min(t, max(content_len - h_clamped, 0))
+            start_idx = 1 + h_clamped
+            end_idx = seq_len - 1 - t_clamped
+            if end_idx <= start_idx:
+                # fallback: keep at least one token between CLS/SEP if possible
+                start_idx = min(1, seq_len)
+                end_idx = max(start_idx + 1, seq_len - 1)
+            if start_idx >= end_idx:
+                e_slice = e.new_zeros((0, e.size(1)))
+                i_slice = i.new_zeros((0,))
+            else:
+                e_slice = e[start_idx:end_idx]
+                i_slice = i[start_idx:end_idx]
+            trimmed_emb.append(e_slice.to(device))
+            trimmed_idf.append(i_slice.to(device))
+            lens.append(e_slice.size(0))
+
+        emb = trimmed_emb
+        idf = trimmed_idf
         emb_pad = pad_sequence(emb, batch_first=True, padding_value=2.0)
         idf_pad = pad_sequence(idf, batch_first=True)
 
@@ -653,8 +708,33 @@ def bert_cos_score_idf(
         for batch_start in iter_range:
             batch_refs = refs[batch_start : batch_start + batch_size]
             batch_hyps = hyps[batch_start : batch_start + batch_size]
-            ref_stats = pad_batch_stats(batch_refs, stats_dict, device)
-            hyp_stats = pad_batch_stats(batch_hyps, stats_dict, device)
+            batch_ref_heads = (
+                ref_trim_heads[batch_start : batch_start + batch_size]
+                if ref_trim_heads is not None
+                else None
+            )
+            batch_ref_tails = (
+                ref_trim_tails[batch_start : batch_start + batch_size]
+                if ref_trim_tails is not None
+                else None
+            )
+            batch_hyp_heads = (
+                hyp_trim_heads[batch_start : batch_start + batch_size]
+                if hyp_trim_heads is not None
+                else None
+            )
+            batch_hyp_tails = (
+                hyp_trim_tails[batch_start : batch_start + batch_size]
+                if hyp_trim_tails is not None
+                else None
+            )
+
+            ref_stats = pad_batch_stats(
+                batch_refs, stats_dict, device, batch_ref_heads, batch_ref_tails
+            )
+            hyp_stats = pad_batch_stats(
+                batch_hyps, stats_dict, device, batch_hyp_heads, batch_hyp_tails
+            )
 
             P, R, F1 = greedy_cos_idf(*ref_stats, *hyp_stats, all_layers)
             preds.append(torch.stack((P, R, F1), dim=-1).cpu())

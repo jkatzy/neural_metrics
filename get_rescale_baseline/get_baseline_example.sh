@@ -1,4 +1,4 @@
 bash download_text_data.sh
-python get_rescale_baseline.py --lang en -b 16 -m \
+python get_rescale_baseline.py --lang en -b 2 -m \
     microsoft/deberta-large \
-    microsoft/deberta-large-mnli \
+    --line-length-limit 256
