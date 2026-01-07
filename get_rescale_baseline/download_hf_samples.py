@@ -4,6 +4,7 @@ import os
 from typing import Iterable, Tuple
 
 from datasets import Dataset, load_dataset
+from tqdm.auto import tqdm
 
 
 def infer_text_field(example: dict, preferred: str = "text") -> str:
@@ -24,7 +25,7 @@ def stream_samples(
     field = text_field or infer_text_field(first)
     yield str(first[field])
     count = 1
-    for ex in iterator:
+    for ex in tqdm(iterator, total=num_samples - 1, desc="Streaming samples"):
         if count >= num_samples:
             break
         yield str(ex[field])
