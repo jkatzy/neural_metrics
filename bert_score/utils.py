@@ -422,16 +422,13 @@ def collate_idf(arr, tokenizer, idf_dict, device="cuda:0"):
         - :param: `pad` (str): the padding token.
         - :param: `device` (str): device to use, e.g. 'cpu' or 'cuda'
     """
-    encoded = [sent_encode(tokenizer, a) for a in arr]
-    arr = []
-    for a in encoded:
-        if not a:
-            continue
-        if any(tok is None for tok in a):
-            continue
-        arr.append(list(a))
-    if not arr:
-        raise ValueError("No valid sentences to collate after filtering empty/None entries")
+    encoded = []
+    for idx, a in enumerate(arr):
+        tokens = sent_encode(tokenizer, a)
+        if tokens is None or len(tokens) == 0 or any(tok is None for tok in tokens):
+            raise ValueError(f"Invalid/empty tokenization for sentence at index {idx}")
+        encoded.append(list(tokens))
+    arr = encoded
 
     idf_weights = [[idf_dict[i] for i in a] for a in arr]
 
