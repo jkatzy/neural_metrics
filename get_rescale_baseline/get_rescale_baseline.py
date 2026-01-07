@@ -1,6 +1,7 @@
 import argparse
 import gzip
 import os
+import random
 from random import shuffle
 
 import numpy as np
@@ -22,26 +23,33 @@ def get_data(
     streaming=True,
     num_samples=None,
     tokenizer=None,
+    local_dataset=None,
 ):
-    """Load a HF dataset (streaming or not) and return randomly paired hyp/cand lists."""
+    """Load a HF or local dataset and return randomly paired hyp/cand lists."""
 
-    from datasets import load_dataset
+    from datasets import load_dataset, load_from_disk
 
-    try:
-        ds = load_dataset(lang, config, split=split, streaming=streaming)
-    except Exception:
-        if streaming:
-            ds = load_dataset(lang, config, split=split, streaming=False)
-            streaming = False
-        else:
-            raise
+    if local_dataset:
+        loaded = load_from_disk(local_dataset)
+        ds = loaded[split] if hasattr(loaded, "keys") and split in loaded else loaded
+        streaming = False
+    else:
+        try:
+            ds = load_dataset(lang, config, split=split, streaming=streaming)
+        except Exception:
+            if streaming:
+                ds = load_dataset(lang, config, split=split, streaming=False)
+                streaming = False
+            else:
+                raise
     lines = []
 
     def push_line(s):
         s = s.strip()
         toks = tokenizer.tokenize(s) if tokenizer is not None else s.split()
-        if 0 < len(toks) < line_length_limit:
-            lines.append(s)
+        start = random.randint(0, len(toks)-line_length_limit) if len(toks) > line_length_limit else 0
+        toks[start:start+line_length_limit]
+        lines.append(tokenizer.convert_tokens_to_string(toks) if tokenizer is not None else " ".join(toks))
 
     ds_iter = iter(ds)
     # infer text field from first example
@@ -109,6 +117,12 @@ if __name__ == "__main__":
         help="Hugging Face dataset id or path (overrides --lang)."
     )
     parser.add_argument(
+        "--local-dataset",
+        type=str,
+        default=None,
+        help="Path to a local dataset saved with datasets.save_to_disk (overrides --hf-dataset).",
+    )
+    parser.add_argument(
         "--hf-config",
         type=str,
         default=None,
@@ -165,15 +179,18 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Require an explicit HF dataset id (script now supports HF datasets only)
-    if not args.hf_dataset:
-        raise SystemExit("Please specify --hf-dataset <DATASET_ID> (this script expects a Hugging Face dataset id)")
+    # Require a dataset source
+    if not args.hf_dataset and not args.local_dataset:
+        raise SystemExit("Please specify --hf-dataset or --local-dataset")
     if not args.model:
         raise SystemExit("Please specify at least one model with -m/--model")
     
     args.use_fast_tokenizer = False
     
-    data_name = args.hf_dataset
+    def _safe_name(name: str) -> str:
+        return name.replace("/", "_")
+
+    data_name = _safe_name(args.hf_dataset) if args.hf_dataset else _safe_name(args.local_dataset)
     config_label = args.hf_config if args.hf_config else "default"
     baseline_dir = f"rescale_baseline/{data_name}/{config_label}"
     # Determine which baselines need computing before loading any dataset to avoid
@@ -200,7 +217,7 @@ if __name__ == "__main__":
         )
 
         hyp, cand = get_data(
-            lang=args.hf_dataset,
+            lang=args.hf_dataset or args.local_dataset,
             split=args.hf_split,
             text_field=args.text_field,
             max_lines=args.max_lines,
@@ -209,6 +226,7 @@ if __name__ == "__main__":
             streaming=args.hf_streaming,
             num_samples=args.num_samples,
             tokenizer=AutoTokenizer.from_pretrained(model_type, use_fast=args.use_fast_tokenizer),
+            local_dataset=args.local_dataset,
         )
         with torch.no_grad():
             score_means = None
