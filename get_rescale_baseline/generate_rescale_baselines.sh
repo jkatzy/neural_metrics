@@ -14,6 +14,7 @@ MAX_LINES=100000
 # NUM_SAMPLES=10000
 BATCH_SIZE=32
 ENCODERS_FILE="encoders.txt"
+LOCAL_DATASET_ROOT="local_datasets"
 
 if [[ ! -f "${ENCODERS_FILE}" ]]; then
   echo "Encoder list not found: ${ENCODERS_FILE}" >&2
@@ -42,12 +43,18 @@ for idx in "${!MODELS[@]}"; do
   lang="${MODEL_LANGS[$idx]}"
   echo ""
   echo ">>> lang=${lang} model=${model}"
+  local_dataset_path="${LOCAL_DATASET_ROOT}/${HF_DATASET//\//_}/${lang}"
+  local_dataset_flag=()
+  if [[ -d "${local_dataset_path}" ]]; then
+    local_dataset_flag=(--local-dataset "${local_dataset_path}" --hf-streaming)
+  fi
   python get_rescale_baseline/get_rescale_baseline.py \
     --hf-dataset "${HF_DATASET}" \
     --hf-split "${HF_SPLIT}" \
     --hf-config "${lang}" \
     --text-field text \
     ${HF_STREAMING} \
+    "${local_dataset_flag[@]}" \
     --max-lines "${MAX_LINES}" \
     -m "${model}" \
     -b "${BATCH_SIZE}"
