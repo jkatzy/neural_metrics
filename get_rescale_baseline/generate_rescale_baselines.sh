@@ -5,11 +5,11 @@ set -euo pipefail
 # Edit the lists below to add/remove models and language/config pairs.
 
 # Hugging Face dataset to draw text from (CulturaX fits many languages)
-HF_DATASET="uonlp/CulturaX"
+HF_DATASET="uonlp/culturax"
 HF_SPLIT="train"
 HF_STREAMING="--hf-streaming"  # set to empty string to disable streaming
 # Read exactly this many lines (pairs will be half this). Keep at 1,000,000 to match baseline recipe.
-MAX_LINES=100000
+MAX_LINES=100
 # If you also want to force the exact number of pairs, set NUM_SAMPLES to half MAX_LINES (comment out to use all).
 # NUM_SAMPLES=10000
 BATCH_SIZE=32
@@ -45,15 +45,9 @@ for idx in "${!MODELS[@]}"; do
   echo ">>> lang=${lang} model=${model}"
   local_dataset_path="${LOCAL_DATASET_ROOT}/${HF_DATASET//\//_}/${lang}"
   local_dataset_flag=()
-  if [[ -d "${local_dataset_path}" ]]; then
-    local_dataset_flag=(--local-dataset "${local_dataset_path}" --hf-streaming)
-  fi
+  local_dataset_flag=(--local-dataset "${local_dataset_path}")
   python get_rescale_baseline/get_rescale_baseline.py \
-    --hf-dataset "${HF_DATASET}" \
-    --hf-split "${HF_SPLIT}" \
-    --hf-config "${lang}" \
     --text-field text \
-    ${HF_STREAMING} \
     "${local_dataset_flag[@]}" \
     --max-lines "${MAX_LINES}" \
     -m "${model}" \
