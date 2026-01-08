@@ -332,12 +332,19 @@ def get_tokenizer(model_type, use_fast=False):
     if model_type.startswith("scibert"):
         model_type = cache_scibert(model_type)
 
+    if "modern" in model_type.lower():
+        return AutoTokenizer.from_pretrained(model_type, use_fast=True, model_max_length = 512)
+    elif "sdadas/polish-roberta-" in model_type:
+        return AutoTokenizer.from_pretrained(model_type, use_fast=True, model_max_length = 512)
+    elif "deberta" in model_type.lower():
+        return AutoTokenizer.from_pretrained(model_type, use_fast=False)
+
     if version.parse(trans_version) >= version.parse("4.0.0"):
         tokenizer = AutoTokenizer.from_pretrained(model_type, use_fast=use_fast)
     else:
         assert not use_fast, "Fast tokenizer is not available for version < 4.0.0"
         tokenizer = AutoTokenizer.from_pretrained(model_type)
-
+    
     # Some tokenizers may return vocab_file=None; guard to avoid downstream attr errors.
     if getattr(tokenizer, "vocab_file", None) is None:
         tokenizer.vocab_file = ""
