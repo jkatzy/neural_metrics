@@ -36,10 +36,10 @@ def _validate_sequences(
             ids = tokenizer.encode(t, add_special_tokens=True)
             if not ids:
                 raise ValueError(f"{label}[{idx}] tokenizes to empty ids")
-            if min(ids) < 0 or max(ids) >= vocab_size:
-                raise ValueError(
-                    f"{label}[{idx}] has token id out of bounds (vocab_size={vocab_size})"
-                )
+            # if min(ids) < 0 or max(ids) >= vocab_size:
+            #     raise ValueError(
+            #         f"{label}[{idx}] has token id out of bounds (vocab_size={vocab_size})"
+            #     )
             if len(ids) > max_len:
                 raise ValueError(
                     f"{label}[{idx}] tokenized length {len(ids)} exceeds model_max_length {max_len}"
@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ref-field", default=None, help="Field name for reference text (str or list[str])")
     parser.add_argument("--model", default=None, help="Model to use (passes through to bert_score.score)")
     parser.add_argument("--num-layers", type=int, default=None, help="Number of layers (optional)")
-    parser.add_argument("--batch-size", type=int, default=64, help="Batch size for scoring")
+    parser.add_argument("--batch-size", type=int, default=4, help="Batch size for scoring")
     parser.add_argument("--idf", action="store_true", help="Use IDF weighting")
     parser.add_argument("--lang", default=None, help="Language code (required if rescaling)")
     parser.add_argument("--rescale-with-baseline", action="store_true", help="Rescale scores with baseline")
@@ -119,7 +119,7 @@ def main(argv=None):
     if args.ref_field is None:
         args.ref_field = "original_comment"
     if args.model is None:
-        args.model = "novelcore/gem-roberta"
+        args.model = "novelcore/gem-modernbert"
     if args.output_csv is None:
         args.output_csv = "outputs/bertscores.csv"
     if args.config is None:

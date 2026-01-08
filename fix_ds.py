@@ -32,6 +32,8 @@ def extract_comment(ex):
         comment = parts[1]
         if '<file_sep>' in comment:
             comment = comment.split('<file_sep>')[0]
+        if '<|file_separator|>' in comment:
+            comment = comment.split('<|file_separator|>')[0]
         if '<eos>' in comment:
             comment = comment.split('<eos>')[0]
         ex[f"predicted_comment_{llm_name}"] = comment

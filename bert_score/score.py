@@ -19,9 +19,9 @@ __all__ = ["score", "plot_example"]
 
 def truncate(prefix: str, text: str, suffix: str, max_len: int, tokenizer) -> str:
     max_len = max_len - 3  # account for special tokens
-    pre_tokens = tokenizer.tokenize(prefix, add_special_tokens=False)
-    suf_tokens = tokenizer.tokenize(suffix, add_special_tokens=False)
-    text_tokens = tokenizer.tokenize(text, add_special_tokens=False)
+    pre_tokens = tokenizer.tokenize(prefix)
+    suf_tokens = tokenizer.tokenize(suffix)
+    text_tokens = tokenizer.tokenize(text)
     token_budget = max_len - len(text_tokens)
 
     # Need to truncate text itself
@@ -144,17 +144,9 @@ def score(
     model.to(device)
 
     def _count_tokens(text):
-        return len(tokenizer.encode(text, add_special_tokens=False))
+        return len(tokenizer.tokenize(text))
 
     max_seq_length = AutoConfig.from_pretrained(model_type).max_position_embeddings
-    def _clamp_text(text: str) -> str:
-        ids = tokenizer.encode(
-            text, add_special_tokens=True, max_length=max_seq_length, truncation=True
-        )
-        return tokenizer.decode(
-            ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )
-
 
     embed_cands = []
     embed_refs = []
@@ -181,8 +173,6 @@ def score(
             cand_trim_tails.append(_count_tokens(cand_suf))
             ref_trim_heads.append(_count_tokens(rpre))
             ref_trim_tails.append(_count_tokens(rsuf))
-        embed_cands = [_clamp_text(t) for t in embed_cands]
-        embed_refs = [_clamp_text(t) for t in embed_refs]
     else:
         # refs is a list of reference lists
         ref_group_boundaries = []

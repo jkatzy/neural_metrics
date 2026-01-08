@@ -333,6 +333,13 @@ def get_tokenizer(model_type, use_fast=False):
     if model_type.startswith("scibert"):
         model_type = cache_scibert(model_type)
 
+    if "modern" in model_type.lower():
+        return AutoTokenizer.from_pretrained(model_type, use_fast=True, model_max_length = 512)
+    elif "roberta" in model_type:
+        return AutoTokenizer.from_pretrained(model_type, use_fast=True, model_max_length = 512)
+    elif "deberta" in model_type.lower():
+        return AutoTokenizer.from_pretrained(model_type, use_fast=False)
+
     if version.parse(trans_version) >= version.parse("4.0.0"):
         tokenizer = AutoTokenizer.from_pretrained(model_type, use_fast=use_fast)
     else:
@@ -342,6 +349,7 @@ def get_tokenizer(model_type, use_fast=False):
     # Some tokenizers may return vocab_file=None; guard to avoid downstream attr errors.
     if getattr(tokenizer, "vocab_file", None) is None:
         tokenizer.vocab_file = ""
+
 
     return tokenizer
 
@@ -362,7 +370,10 @@ def bert_encode(model, x, attention_mask, all_layers=False):
     with torch.no_grad():
         position_ids = (attention_mask.long().cumsum(dim=1) - 1).clamp(min=0)
         # Safety: keep within embedding range
-        max_pos = model.embeddings.position_embeddings.num_embeddings 
+        if 'position_embeddings' in model.embeddings.__dict__['_modules']:
+            max_pos = model.embeddings.position_embeddins.num_embeddings
+        else:
+            max_pos = AutoConfig.from_pretrained(model.name_or_path).max_position_embeddings
         position_ids = position_ids.clamp(max=max_pos - 1)   # This is necessary for max length roberta calls, as roberta models pad with id 1 and otherwise it will create an out of bounds error in the embedding layer call.
 
         if model.loss_type == None:
