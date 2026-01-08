@@ -147,6 +147,13 @@ def score(
         return len(tokenizer.encode(text, add_special_tokens=False))
 
     max_seq_length = AutoConfig.from_pretrained(model_type).max_position_embeddings
+    def _clamp_text(text: str) -> str:
+        ids = tokenizer.encode(
+            text, add_special_tokens=True, max_length=max_seq_length, truncation=True
+        )
+        return tokenizer.decode(
+            ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
 
 
     embed_cands = []
@@ -174,6 +181,8 @@ def score(
             cand_trim_tails.append(_count_tokens(cand_suf))
             ref_trim_heads.append(_count_tokens(rpre))
             ref_trim_tails.append(_count_tokens(rsuf))
+        embed_cands = [_clamp_text(t) for t in embed_cands]
+        embed_refs = [_clamp_text(t) for t in embed_refs]
     else:
         # refs is a list of reference lists
         ref_group_boundaries = []
@@ -215,6 +224,8 @@ def score(
                 refs.append(ref_text)
             ref_group_boundaries.append((count, count + len(ref_group)))
             count += len(ref_group)
+        embed_cands = [_clamp_text(t) for t in embed_cands]
+        embed_refs = [_clamp_text(t) for t in embed_refs]
     if not idf:
         idf_dict = defaultdict(lambda: 1.0)
         # set idf for [SEP] and [CLS] to 0

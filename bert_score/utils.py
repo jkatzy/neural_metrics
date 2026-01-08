@@ -333,19 +333,12 @@ def get_tokenizer(model_type, use_fast=False):
     if model_type.startswith("scibert"):
         model_type = cache_scibert(model_type)
 
-    if "modern" in model_type.lower():
-        return AutoTokenizer.from_pretrained(model_type, use_fast=True, model_max_length = 512)
-    elif "sdadas/polish-roberta-" in model_type:
-        return AutoTokenizer.from_pretrained(model_type, use_fast=True, model_max_length = 512)
-    elif "deberta" in model_type.lower():
-        return AutoTokenizer.from_pretrained(model_type, use_fast=False)
-
     if version.parse(trans_version) >= version.parse("4.0.0"):
         tokenizer = AutoTokenizer.from_pretrained(model_type, use_fast=use_fast)
     else:
         assert not use_fast, "Fast tokenizer is not available for version < 4.0.0"
         tokenizer = AutoTokenizer.from_pretrained(model_type)
-    
+
     # Some tokenizers may return vocab_file=None; guard to avoid downstream attr errors.
     if getattr(tokenizer, "vocab_file", None) is None:
         tokenizer.vocab_file = ""
@@ -367,12 +360,17 @@ def padding(arr, pad_token, dtype=torch.long):
 def bert_encode(model, x, attention_mask, all_layers=False):
     model.eval()
     with torch.no_grad():
+        position_ids = (attention_mask.long().cumsum(dim=1) - 1).clamp(min=0)
+        # Safety: keep within embedding range
+        max_pos = model.embeddings.position_embeddings.num_embeddings 
+        position_ids = position_ids.clamp(max=max_pos - 1)   # This is necessary for max length roberta calls, as roberta models pad with id 1 and otherwise it will create an out of bounds error in the embedding layer call.
+
         if model.loss_type == None:
             model.loss_type = "CrossEntropyLoss"
             out = model(
-                x, attention_mask=attention_mask, output_hidden_states=all_layers
+                x, attention_mask=attention_mask, position_ids=position_ids, output_hidden_states=all_layers
             )
-        out = model(x, attention_mask=attention_mask, output_hidden_states=all_layers)
+        out = model(x, attention_mask=attention_mask, position_ids=position_ids, output_hidden_states=all_layers)
     if all_layers:
         emb = torch.stack(out[-1], dim=2)
     else:
