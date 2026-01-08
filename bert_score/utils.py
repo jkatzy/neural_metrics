@@ -11,7 +11,7 @@ from packaging import version
 from torch.nn.utils.rnn import pad_sequence
 from tqdm.auto import tqdm
 from transformers import (AutoModel, AutoTokenizer, BertConfig, GPT2Tokenizer, RobertaTokenizer,
-                          RobertaConfig, XLMConfig, XLNetConfig)
+                          RobertaConfig, XLMConfig, XLNetConfig, AutoConfig)
 from transformers import __version__ as trans_version
 
 from . import __version__
@@ -188,6 +188,7 @@ model2layers = {
 def sent_encode(tokenizer, sent):
     "Encoding as sentence based on the tokenizer"
     sent = sent.strip()
+    max_len = AutoConfig.from_pretrained(tokenizer.name_or_path).max_position_embeddings
     if sent == "":
         return tokenizer.build_inputs_with_special_tokens([])
     elif isinstance(tokenizer, GPT2Tokenizer) or isinstance(tokenizer, RobertaTokenizer):
@@ -197,7 +198,7 @@ def sent_encode(tokenizer, sent):
                 sent,
                 add_special_tokens=True,
                 add_prefix_space=True,
-                max_length=tokenizer.model_max_length,
+                max_length=max_len,
                 truncation=True,
             )
         elif version.parse(trans_version) >= version.parse("3.0.0"):
@@ -205,7 +206,7 @@ def sent_encode(tokenizer, sent):
                 sent,
                 add_special_tokens=True,
                 add_prefix_space=True,
-                max_length=tokenizer.max_len,
+                max_length=max_len,
                 truncation=True,
             )
         elif version.parse(trans_version) >= version.parse("2.0.0"):
@@ -213,7 +214,7 @@ def sent_encode(tokenizer, sent):
                 sent,
                 add_special_tokens=True,
                 add_prefix_space=True,
-                max_length=tokenizer.max_len,
+                max_length=max_len,
             )
         else:
             raise NotImplementedError(
@@ -224,19 +225,19 @@ def sent_encode(tokenizer, sent):
             return tokenizer.encode(
                 sent,
                 add_special_tokens=True,
-                max_length=tokenizer.model_max_length,
+                max_length=max_len,
                 truncation=True,
             )
         elif version.parse(trans_version) >= version.parse("3.0.0"):
             return tokenizer.encode(
                 sent,
                 add_special_tokens=True,
-                max_length=tokenizer.max_len,
+                max_length=max_len,
                 truncation=True,
             )
         elif version.parse(trans_version) >= version.parse("2.0.0"):
             return tokenizer.encode(
-                sent, add_special_tokens=True, max_length=tokenizer.max_len
+                sent, add_special_tokens=True, max_length=max_len
             )
         else:
             raise NotImplementedError(

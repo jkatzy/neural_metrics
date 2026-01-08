@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoConfig
 
 from .utils import (bert_cos_score_idf, cache_scibert, get_bert_embedding,
                     get_hash, get_idf_dict, get_model, get_tokenizer,
@@ -18,10 +18,17 @@ from .utils import (bert_cos_score_idf, cache_scibert, get_bert_embedding,
 __all__ = ["score", "plot_example"]
 
 def truncate(prefix: str, text: str, suffix: str, max_len: int, tokenizer) -> str:
+    max_len = max_len - 3  # account for special tokens
     pre_tokens = tokenizer.tokenize(prefix, add_special_tokens=False)
     suf_tokens = tokenizer.tokenize(suffix, add_special_tokens=False)
     text_tokens = tokenizer.tokenize(text, add_special_tokens=False)
     token_budget = max_len - len(text_tokens)
+
+    # Need to truncate text itself
+    if token_budget <= 0:
+        # No budget for prefix/suffix, truncate text only
+        text_tokens = text_tokens[:max_len]
+        return tokenizer.convert_tokens_to_string(text_tokens)
 
     if len(pre_tokens) + len(suf_tokens) + len(text_tokens) < max_len:
         return tokenizer.convert_tokens_to_string(pre_tokens + text_tokens + suf_tokens)
@@ -125,7 +132,10 @@ def score(
         lang = lang.lower()
         model_type = lang2model[lang]
     if num_layers is None:
-        num_layers = model2layers[model_type]
+        if model_type in model2layers:
+            num_layers = model2layers[model_type]
+        else:
+            num_layers = int(AutoConfig.from_pretrained(model_type).num_hidden_layers * 0.75)
 
     tokenizer = get_tokenizer(model_type, use_fast_tokenizer)
     model = get_model(model_type, num_layers, all_layers)
@@ -135,6 +145,9 @@ def score(
 
     def _count_tokens(text):
         return len(tokenizer.encode(text, add_special_tokens=False))
+
+    max_seq_length = AutoConfig.from_pretrained(model_type).max_position_embeddings
+
 
     embed_cands = []
     embed_refs = []
@@ -152,8 +165,8 @@ def score(
         for cand, ref_text, cand_pre, cand_suf, rpre, rsuf in zip(
             cands, refs, cand_prefixes, cand_suffixes, prefixes, suffixes
         ):
-            affixed_ref = truncate(rpre, ref_text, rsuf, tokenizer.model_max_length, tokenizer)
-            affixed_cand = truncate(cand_pre, cand, cand_suf, tokenizer.model_max_length, tokenizer)
+            affixed_ref = truncate(rpre, ref_text, rsuf, max_seq_length, tokenizer)
+            affixed_cand = truncate(cand_pre, cand, cand_suf, max_seq_length, tokenizer)
 
             embed_cands.append(affixed_cand)
             embed_refs.append(affixed_ref)
@@ -188,10 +201,9 @@ def score(
             suffixes = _broadcast_affix(strip_suffix, suf_group, len(ref_group))
             cand_pre_tokens = _count_tokens(cand_pre)
             cand_suf_tokens = _count_tokens(cand_suf)
-            affixed_cand = truncate(cand_pre, cand, cand_suf, tokenizer.model_max_length, tokenizer)
-
+            affixed_cand = truncate(cand_pre, cand, cand_suf, max_seq_length, tokenizer)
             for ref_text, rpre, rsuf in zip(ref_group, prefixes, suffixes):
-                affixed_ref = truncate(rpre, ref_text, rsuf, tokenizer.model_max_length, tokenizer)
+                affixed_ref = truncate(rpre, ref_text, rsuf, max_seq_length, tokenizer)
                 embed_refs.append(affixed_ref)
                 ref_trim_heads.append(_count_tokens(rpre))
                 ref_trim_tails.append(_count_tokens(rsuf))

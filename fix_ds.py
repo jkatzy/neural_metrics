@@ -29,11 +29,17 @@ def extract_comment(ex):
         if len(parts) != 2:
             print(f"Middle token '{middle_token}' missing in generation for {llm_name}")
             continue
-        ex[f"predicted_comment_{llm_name}"] = parts[1]
+        comment = parts[1]
+        if '<file_sep>' in comment:
+            comment = comment.split('<file_sep>')[0]
+        if '<eos>' in comment:
+            comment = comment.split('<eos>')[0]
+        ex[f"predicted_comment_{llm_name}"] = comment
     return ex
 
 
 for lang in LANGS:
-    ds = load_dataset("AISE-TUDelft/multilingual-code-comments-fixed", lang, split="train")
+    ds = load_dataset("AISE-TUDelft/multilingual-code-comments", lang, split="train")
     ds = ds.map(extract_comment, num_proc=os.cpu_count() or 1)
-    # ds.push_to_hub("AISE-TUDelft/multilingual-code-comments-fixed", config_name=lang, split="train")
+    ds.push_to_hub("AISE-TUDelft/multilingual-code-comments-fixed", config_name=lang, split="train")
+
