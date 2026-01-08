@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Union
 
 import pandas as pd
 from datasets import load_dataset
+from transformers import AutoConfig, AutoTokenizer
+from bert_score.utils import get_tokenizer
 
 import bert_score
 
@@ -20,6 +22,33 @@ def _get_field(record: Dict[str, Any], field: str) -> Any:
     if field not in record:
         raise KeyError(f"Field '{field}' not found in dataset record keys: {list(record.keys())}")
     return record[field]
+
+
+def _validate_sequences(
+    texts: List[Union[str, List[str]]], tokenizer, label: str, max_positions: int = None
+) -> None:
+    vocab_size = tokenizer.vocab_size
+    max_len = tokenizer.model_max_length
+    idx = 0
+    for item in texts:
+        seqs = item if isinstance(item, list) else [item]
+        for t in seqs:
+            ids = tokenizer.encode(t, add_special_tokens=True)
+            if not ids:
+                raise ValueError(f"{label}[{idx}] tokenizes to empty ids")
+            if min(ids) < 0 or max(ids) >= vocab_size:
+                raise ValueError(
+                    f"{label}[{idx}] has token id out of bounds (vocab_size={vocab_size})"
+                )
+            if len(ids) > max_len:
+                raise ValueError(
+                    f"{label}[{idx}] tokenized length {len(ids)} exceeds model_max_length {max_len}"
+                )
+            if max_positions is not None and len(ids) > max_positions:
+                raise ValueError(
+                    f"{label}[{idx}] tokenized length {len(ids)} exceeds model max_position_embeddings {max_positions}"
+                )
+        idx += 1
 
 FIM_TOKEN_DICT = {'google/codegemma-7b': {'prefix': '<|fim_prefix|>', 'middle': '<|fim_middle|>', 'suffix': '<|fim_suffix|>'},
                   'meta-llama/CodeLlama-7b-hf' :{'prefix': '<PRE>', 'middle': '<MID>', 'suffix': '<SUF>'},
@@ -60,7 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lang", default=None, help="Language code (required if rescaling)")
     parser.add_argument("--rescale-with-baseline", action="store_true", help="Rescale scores with baseline")
     parser.add_argument("--baseline-path", default=None, help="Optional custom baseline path")
-    parser.add_argument("--use-fast-tokenizer", action="store_false", help="Use HF fast tokenizer")
+    parser.add_argument(
+        "--use-fast-tokenizer",
+        action="store_true",
+        help="Use HF fast tokenizer (default: slow tokenizer).",
+    )
     parser.add_argument("--id-field", default=None, help="Field name for a sample identifier (saved to CSV).")
     parser.add_argument(
         "--use-context",
@@ -86,12 +119,17 @@ def main(argv=None):
     if args.ref_field is None:
         args.ref_field = "original_comment"
     if args.model is None:
-        args.model = "roberta-base"
+        args.model = "novelcore/gem-roberta"
     if args.output_csv is None:
         args.output_csv = "outputs/bertscores.csv"
     if args.config is None:
         args.config = "English"
     args.rescale_with_baseline = True
+    model_config = AutoConfig.from_pretrained(args.model)
+    validation_tokenizer = get_tokenizer(args.model)
+
+    args.lang = "el"
+    args.use_context = True
     # if args.use_context is None:
     # args.use_context = True
 
@@ -163,6 +201,18 @@ def main(argv=None):
         cand_suffixes = [""] * len(cand_suffixes)
         ref_prefixes = [""] * len(ref_prefixes)
         ref_suffixes = [""] * len(ref_suffixes)
+    _validate_sequences(
+        cands,
+        validation_tokenizer,
+        "cands",
+        max_positions=getattr(model_config, "max_position_embeddings", None),
+    )
+    _validate_sequences(
+        refs,
+        validation_tokenizer,
+        "refs",
+        max_positions=getattr(model_config, "max_position_embeddings", None),
+    )
     # Call bert_score.score with per-item affixes
     result = bert_score.score(
         cands,

@@ -224,6 +224,18 @@ if __name__ == "__main__":
     if not todo_models:
         raise SystemExit("All requested baselines already exist; nothing to do.")
 
+    def _validate_batch(texts, tokenizer):
+        vocab_size = tokenizer.vocab_size
+        max_len = tokenizer.model_max_length
+        for t in texts:
+            ids = tokenizer.encode(t, add_special_tokens=True)
+            if not ids:
+                raise ValueError("Tokenization yielded empty ids")
+            if max(ids) >= vocab_size or min(ids) < 0:
+                raise ValueError(f"Token ids out of bounds for vocab size {vocab_size}")
+            if len(ids) > max_len:
+                raise ValueError(f"Tokenized length {len(ids)} exceeds model_max_length {max_len}")
+
     for model_type in todo_models:
         baseline_file_path = f"{baseline_dir}/{model_type}.tsv"
         print(f"computing baseline for {model_type} on {data_name} ({config_label})")
@@ -253,6 +265,8 @@ if __name__ == "__main__":
                 chunk(list(zip(hyp, cand)), 1000), total=len(hyp) / 1000
             ):
                 batch_hyp, batch_cand = zip(*batches)
+                _validate_batch(batch_hyp, scorer._tokenizer)
+                _validate_batch(batch_cand, scorer._tokenizer)
                 scores = scorer.score(
                     batch_hyp, batch_cand, batch_size=args.batch_size
                 )
