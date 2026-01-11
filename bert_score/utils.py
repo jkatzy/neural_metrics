@@ -250,7 +250,6 @@ def get_model(model_type, num_layers, all_layers=None):
         model = AutoModel.from_pretrained(cache_scibert(model_type))
     elif "t5" in model_type:
         from transformers import T5EncoderModel
-
         model = T5EncoderModel.from_pretrained(model_type)
     else:
         try:
@@ -371,7 +370,7 @@ def bert_encode(model, x, attention_mask, all_layers=False):
         position_ids = (attention_mask.long().cumsum(dim=1) - 1).clamp(min=0)
         # Safety: keep within embedding range
         if 'position_embeddings' in model.embeddings.__dict__['_modules']:
-            max_pos = model.embeddings.position_embeddins.num_embeddings
+            max_pos = model.embeddings.position_embeddings.num_embeddings
         else:
             max_pos = AutoConfig.from_pretrained(model.name_or_path).max_position_embeddings
         position_ids = position_ids.clamp(max=max_pos - 1)   # This is necessary for max length roberta calls, as roberta models pad with id 1 and otherwise it will create an out of bounds error in the embedding layer call.
@@ -770,19 +769,29 @@ def get_hash(
     num_layers,
     idf,
     rescale_with_baseline,
-    use_custom_baseline,
     use_fast_tokenizer,
+    use_context,
+    multilingual
 ):
     msg = "{}_L{}{}_version={}(hug_trans={})".format(
         model, num_layers, "_idf" if idf else "_no-idf", __version__, trans_version
     )
     if rescale_with_baseline:
-        if use_custom_baseline:
-            msg += "-custom-rescaled"
-        else:
-            msg += "-rescaled"
+        msg += "_rescale"
+    else:
+        msg += "_no-rescaled"
     if use_fast_tokenizer:
         msg += "_fast-tokenizer"
+    else:
+        msg += "_slow-tokenizer"
+    if use_context:
+        msg += "_context"
+    else:
+        msg += "_no-context"
+    if multilingual:
+        msg += "_multilingual"
+    else:
+        msg += "_monolingual"
     return msg
 
 

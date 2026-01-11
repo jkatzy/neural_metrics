@@ -1,3 +1,4 @@
+microsoft/deberta-v3-base, el
 novelcore/gem-roberta, el
 novelcore/gem-modernbert, el
 novelcore/gem-electra, el
@@ -15,7 +16,6 @@ google-bert/bert-base-cased, en
 google-bert/bert-large-cased, en
 FacebookAI/xlm-roberta-base, en
 FacebookAI/xlm-roberta-large, en
-microsoft/deberta-v3-base, en
 microsoft/deberta-v3-large, en
 albert/albert-base-v2, en
 albert/albert-large-v2, en

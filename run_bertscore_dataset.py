@@ -21,7 +21,19 @@ def _get_field(record: Dict[str, Any], field: str) -> Any:
         return None
     if field not in record:
         raise KeyError(f"Field '{field}' not found in dataset record keys: {list(record.keys())}")
+    if record[field] is None:
+        print(f"record entry is None for {field}")
+        return ""
     return record[field]
+
+
+def _sanitize_hash_code(hash_code: str) -> str:
+    if not hash_code:
+        return hash_code
+    for sep in {"/", os.sep, os.altsep}:
+        if sep:
+            hash_code = hash_code.replace(sep, "__")
+    return hash_code
 
 
 def _validate_sequences(
@@ -101,35 +113,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="If true, adds context to the generted comments before scoring, default True.",
     )
     parser.add_argument(
-        "--output-csv",
+        "--output-dir",
         required=False,
-        help="Path to save CSV with columns: cand, refs (JSON), P, R, F, and optional hash",
+        default="./outputs/",
+        help="Directory to save CSV with columns: cand, refs (JSON), P, R, F, filename is the hash",
     )
     parser.add_argument("--return-hash", action="store_true", help="Include hash code column in output")
+    parser.add_argument("--multilingual", required=False, action="store_false", default="False", help=" Set to True if running a multilingual model, only used for hash and saving, default False")
     return parser
 
 
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-
+    args.return_hash = True
     # Fallback defaults to allow running without CLI args (handy for debugger).
     if args.dataset is None:
-        args.dataset = "AISE-TUDelft/multilingual-code-comments-fixed"
+        args.dataset = "AISE-TUDelft/multilingual-code-comments"
     if args.ref_field is None:
         args.ref_field = "original_comment"
     if args.model is None:
         args.model = "novelcore/gem-modernbert"
-    if args.output_csv is None:
-        args.output_csv = "outputs/bertscores.csv"
+    # if args.output_csv is None:
+    #     args.output_csv = "outputs/bertscores.csv"
     if args.config is None:
-        args.config = "English"
-    args.rescale_with_baseline = True
+        args.config = "Greek"
+    # args.rescale_with_baseline = True
     model_config = AutoConfig.from_pretrained(args.model)
     validation_tokenizer = get_tokenizer(args.model)
 
-    args.lang = "el"
-    args.use_context = True
+    # args.lang = "el"
+    # args.use_context = True
     # if args.use_context is None:
     # args.use_context = True
 
@@ -161,7 +175,8 @@ def main(argv=None):
 
             split_ctx = context.split(tokens["suffix"])
             if len(split_ctx) < 2:
-                raise ValueError(f"Context for LLM '{llm}' does not contain suffix token")
+                split_ctx=["",""]
+                # raise ValueError(f"Context for LLM '{llm}' does not contain suffix token")
             cand_pre = split_ctx[0].replace(tokens["prefix"], "")
             cand_suf = split_ctx[1].replace(tokens["middle"], "")
 
@@ -201,18 +216,7 @@ def main(argv=None):
         cand_suffixes = [""] * len(cand_suffixes)
         ref_prefixes = [""] * len(ref_prefixes)
         ref_suffixes = [""] * len(ref_suffixes)
-    _validate_sequences(
-        cands,
-        validation_tokenizer,
-        "cands",
-        max_positions=getattr(model_config, "max_position_embeddings", None),
-    )
-    _validate_sequences(
-        refs,
-        validation_tokenizer,
-        "refs",
-        max_positions=getattr(model_config, "max_position_embeddings", None),
-    )
+
     # Call bert_score.score with per-item affixes
     result = bert_score.score(
         cands,
@@ -225,6 +229,8 @@ def main(argv=None):
         rescale_with_baseline=args.rescale_with_baseline,
         baseline_path=args.baseline_path,
         use_fast_tokenizer=args.use_fast_tokenizer,
+        use_context=args.use_context,
+        multilingual=args.multilingual,
         strip_prefix_ref=ref_prefixes,
         strip_suffix_ref=ref_suffixes,
         strip_prefix_cand=cand_prefixes,
@@ -246,12 +252,13 @@ def main(argv=None):
         }
     )
     if args.return_hash and hash_code is not None:
+        hash_code = _sanitize_hash_code(hash_code)
         df["hash"] = hash_code
 
-    out_dir = os.path.dirname(args.output_csv)
+    out_dir = os.path.dirname(args.output_dir)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    df.to_csv(args.output_csv, index=False)
+    df.to_csv(os.path.join(args.output_dir, hash_code) + ".csv", index=False)
 
     avg_P = float(P.mean())
     avg_R = float(R.mean())

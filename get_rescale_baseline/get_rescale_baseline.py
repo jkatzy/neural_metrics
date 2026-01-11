@@ -196,7 +196,7 @@ if __name__ == "__main__":
     parser.add_argument("-b", "--batch_size", type=int, default=64)
 
     args = parser.parse_args()
-
+    
     # Require a dataset source
     if not args.hf_dataset and not args.local_dataset:
         raise SystemExit("Please specify --hf-dataset or --local-dataset")

@@ -64,6 +64,8 @@ def score(
     rescale_with_baseline=False,
     baseline_path=None,
     use_fast_tokenizer=False,
+    use_context = None,
+    multilingual = None,
     strip_prefix="",
     strip_suffix="",
     strip_prefix_ref=None,
@@ -301,8 +303,9 @@ def score(
                     num_layers,
                     idf,
                     rescale_with_baseline,
-                    use_custom_baseline=use_custom_baseline,
                     use_fast_tokenizer=use_fast_tokenizer,
+                    use_context=use_context,
+                    multilingual = multilingual
                 ),
             ]
         )

@@ -36,6 +36,8 @@ class BERTScorer:
         rescale_with_baseline=False,
         baseline_path=None,
         use_fast_tokenizer=False,
+        use_context=None,
+        multilingual=None
     ):
         """
         Args:
@@ -59,6 +61,8 @@ class BERTScorer:
             - :param: `baseline_path` (str): customized baseline file
             - :param: `use_fast_tokenizer` (bool): `use_fast` parameter passed to HF tokenizer
         """
+        self.use_context = use_context
+        self.multilingual = multilingual
 
         assert (
             lang is not None or model_type is not None
@@ -169,8 +173,9 @@ class BERTScorer:
             self.num_layers,
             self.idf,
             self.rescale_with_baseline,
-            self.use_custom_baseline,
             self.use_fast_tokenizer,
+            self.use_context,
+            self.multilingual
         )
 
     def compute_idf(self, sents):
