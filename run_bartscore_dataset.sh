@@ -27,6 +27,10 @@ declare -A LANG_TO_CONFIG=(
 
 mkdir -p "${OUTPUT_DIR}"
 
+slugify() {
+  echo "$1" | tr ' /:' '_' | tr -cd '[:alnum:]_.-'
+}
+
 while IFS=',' read -r raw_model raw_lang; do
   model=$(echo "${raw_model}" | xargs)
   lang=$(echo "${raw_lang}" | xargs)
@@ -37,7 +41,16 @@ while IFS=',' read -r raw_model raw_lang; do
     exit 1
   fi
   safe_model=${model//\//_}
-  output_csv="${OUTPUT_DIR}/bartscores_${lang}_${safe_model}.csv"
+  safe_dataset=$(slugify "${DATASET}")
+  safe_split=$(slugify "${SPLIT}")
+  safe_ref=$(slugify "${REF_FIELD}")
+  safe_load=$(slugify "${LOAD_PATH:-none}")
+  safe_device=$(slugify "${DEVICE:-auto}")
+  safe_llms=$(slugify "${LLM_MODELS[*]:-all}")
+  safe_id=$(slugify "${ID_FIELD:-none}")
+  safe_context=$(slugify "${USE_CONTEXT}")
+  settings="ds-${safe_dataset}_cfg-${config}_split-${safe_split}_ref-${safe_ref}_load-${safe_load}_dev-${safe_device}_max-${MAX_LENGTH}_bs-${BATCH_SIZE}_ctx-${safe_context}_id-${safe_id}_llms-${safe_llms}"
+  output_csv="${OUTPUT_DIR}/bartscores_${lang}_${safe_model}_${settings}.csv"
 
   echo ">>> Running BARTScore for model=${model} lang=${lang} config=${config} -> ${output_csv}"
   python run_bartscore_dataset.py \

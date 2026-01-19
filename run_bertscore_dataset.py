@@ -142,6 +142,7 @@ def main(argv=None):
     model_config = AutoConfig.from_pretrained(args.model)
     validation_tokenizer = get_tokenizer(args.model)
 
+    args.use_context = True
     # args.lang = "el"
     # args.use_context = True
     # if args.use_context is None:

@@ -11,7 +11,7 @@ from packaging import version
 from torch.nn.utils.rnn import pad_sequence
 from tqdm.auto import tqdm
 from transformers import (AutoModel, AutoTokenizer, BertConfig, GPT2Tokenizer, RobertaTokenizer,
-                          RobertaConfig, XLMConfig, XLNetConfig, AutoConfig)
+                          RobertaConfig, XLMConfig, XLNetConfig, AutoConfig, AutoModelForSeq2SeqLM)
 from transformers import __version__ as trans_version
 
 from . import __version__
@@ -338,9 +338,19 @@ def get_tokenizer(model_type, use_fast=False):
         return AutoTokenizer.from_pretrained(model_type, use_fast=True, model_max_length = 512)
     elif "deberta" in model_type.lower():
         return AutoTokenizer.from_pretrained(model_type, use_fast=False)
+    elif "codet5" in model_type.lower():
+        return load_tokenizer_with_codet5_patch(model_type, use_fast=use_fast)
+    elif "polish-bart-base" in model_type.lower():
+        return load_tokenizer_with_live_patch(model_type)
 
     if version.parse(trans_version) >= version.parse("4.0.0"):
-        tokenizer = AutoTokenizer.from_pretrained(model_type, use_fast=use_fast)
+        if use_fast:
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(model_type, use_fast=True)
+            except Exception:
+                tokenizer = AutoTokenizer.from_pretrained(model_type, use_fast=False)
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(model_type, use_fast=False)
     else:
         assert not use_fast, "Fast tokenizer is not available for version < 4.0.0"
         tokenizer = AutoTokenizer.from_pretrained(model_type)
@@ -836,3 +846,208 @@ def cache_scibert(model_type, cache_folder="~/.cache/torch/transformers"):
                 )
 
     return filename
+
+from huggingface_hub import snapshot_download
+from transformers import PreTrainedTokenizerFast
+import re
+import json
+import os
+from pathlib import Path
+
+_PREPEND_ERR_RE = re.compile(r"add_prefix_space does not match declared prepend_scheme", re.IGNORECASE)
+_EXTRA_SPECIAL_ERR_RE = re.compile(r"extra_special_tokens must be", re.IGNORECASE)
+
+
+def _resolve_hf_cache_dir(cache_dir: str | os.PathLike | None) -> str | os.PathLike | None:
+    if cache_dir is not None:
+        return cache_dir
+    return os.getenv("HF_PATH")
+
+
+def _patch_special_tokens_map_additional_tokens(special_tokens_path: Path) -> bool:
+    with special_tokens_path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    tokens = data.get("additional_special_tokens")
+    if not isinstance(tokens, list):
+        return False
+
+    changed = False
+    normalized: list[str] = []
+    for token in tokens:
+        if isinstance(token, dict) and "content" in token:
+            normalized.append(token["content"])
+            changed = True
+        else:
+            normalized.append(token)
+
+    if changed:
+        data["additional_special_tokens"] = normalized
+        with special_tokens_path.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    return changed
+
+
+def _patch_tokenizer_config_extra_special_tokens(tokenizer_config_path: Path) -> bool:
+    with tokenizer_config_path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    extra = data.get("extra_special_tokens")
+    if extra is None:
+        return False
+
+    changed = False
+    if isinstance(extra, list):
+        normalized: list[str] = []
+        for token in extra:
+            if isinstance(token, dict) and "content" in token:
+                normalized.append(token["content"])
+                changed = True
+            else:
+                normalized.append(token)
+        if changed:
+            data["extra_special_tokens"] = normalized
+    elif isinstance(extra, dict):
+        normalized: dict[str, str] = {}
+        for key, token in extra.items():
+            if isinstance(token, dict) and "content" in token:
+                normalized[key] = token["content"]
+                changed = True
+            else:
+                normalized[key] = token
+        if changed:
+            data["extra_special_tokens"] = normalized
+
+    if changed:
+        with tokenizer_config_path.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    return changed
+
+
+def _patch_tokenizer_json_for_metaspace(tokenizer_json_path: Path, *, prepend_scheme: str = "never") -> bool:
+    """
+    Patches legacy Metaspace format in tokenizer.json to be compatible with newer tokenizers.
+    Returns True if any change was made.
+    """
+    with tokenizer_json_path.open("r", encoding="utf-8") as f:
+        tok = json.load(f)
+
+    changed = False
+
+    def patch_metaspace_block(block: dict) -> bool:
+        nonlocal changed
+        if isinstance(block, dict) and block.get("type") == "Metaspace":
+            # Older exports used add_prefix_space; newer expects prepend_scheme.
+            if "add_prefix_space" in block:
+                block.pop("add_prefix_space", None)
+                changed = True
+            if block.get("prepend_scheme") != prepend_scheme:
+                block["prepend_scheme"] = prepend_scheme
+                changed = True
+        return changed
+
+    # Patch common top-level locations
+    patch_metaspace_block(tok.get("pre_tokenizer"))
+    patch_metaspace_block(tok.get("decoder"))
+
+    # Some exports nest these under a "pre_tokenizer": {"type":"Sequence","pretokenizers":[...]}
+    def walk(obj):
+        nonlocal changed
+        if isinstance(obj, dict):
+            patch_metaspace_block(obj)
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+
+    walk(tok.get("pre_tokenizer"))
+    walk(tok.get("decoder"))
+
+    if changed:
+        with tokenizer_json_path.open("w", encoding="utf-8") as f:
+            json.dump(tok, f, ensure_ascii=False, indent=2)
+
+    return changed
+
+
+def load_tokenizer_with_live_patch(
+    model_name_or_path: str,
+    *,
+    cache_dir: str | os.PathLike | None = None,
+    use_fast: bool = True,
+):
+    """
+    Load a tokenizer. If the model ships an old tokenizer.json that breaks on new tokenizers
+    (Metaspace prepend_scheme mismatch), patch it locally and retry.
+    """
+    cache_dir = _resolve_hf_cache_dir(cache_dir)
+    try:
+        return AutoTokenizer.from_pretrained(model_name_or_path, use_fast=use_fast, cache_dir=cache_dir)
+    except Exception as e:
+        msg = str(e)
+        if not _PREPEND_ERR_RE.search(msg):
+            raise  # unrelated error, don't hide it
+
+        # Download a local snapshot we are allowed to modify (not the shared HF cache).
+        local_dir = snapshot_download(
+            repo_id=model_name_or_path,
+            cache_dir=cache_dir,
+            # Put it in a stable local folder so we don't re-download/patc*h* every run
+            local_dir=None,
+            local_dir_use_symlinks=False,
+        )
+
+        tok_path = Path(local_dir) / "tokenizer.json"
+        if not tok_path.exists():
+            # If there's no tokenizer.json, this isn't the same issue.
+            raise
+
+        # Choose prepend_scheme consistent with add_prefix_space=False.
+        # For BART/RoBERTa-like models this is usually "never".
+        _patch_tokenizer_json_for_metaspace(tok_path, prepend_scheme="never")
+
+        # Load directly as fast tokenizer from patched folder
+        return PreTrainedTokenizerFast.from_pretrained(local_dir)
+
+
+def load_tokenizer_with_codet5_patch(
+    model_name_or_path: str,
+    *,
+    cache_dir: str | os.PathLike | None = None,
+    use_fast: bool = True,
+):
+    """
+    Load a tokenizer. If CodeT5 ships additional_special_tokens serialized as dicts,
+    patch them to plain strings and retry.
+    """
+    cache_dir = _resolve_hf_cache_dir(cache_dir)
+    try:
+        return AutoTokenizer.from_pretrained(model_name_or_path, use_fast=use_fast, cache_dir=cache_dir)
+    except Exception as e:
+        msg = str(e)
+        if not _EXTRA_SPECIAL_ERR_RE.search(msg):
+            raise
+
+        local_dir = snapshot_download(
+            repo_id=model_name_or_path,
+            cache_dir=cache_dir,
+            local_dir=None,
+            local_dir_use_symlinks=False,
+        )
+
+        changed = False
+        special_tokens_path = Path(local_dir) / "special_tokens_map.json"
+        if special_tokens_path.exists():
+            changed |= _patch_special_tokens_map_additional_tokens(special_tokens_path)
+
+        tokenizer_config_path = Path(local_dir) / "tokenizer_config.json"
+        if tokenizer_config_path.exists():
+            changed |= _patch_tokenizer_config_extra_special_tokens(tokenizer_config_path)
+
+        if not changed:
+            raise
+
+        return AutoTokenizer.from_pretrained(local_dir, use_fast=use_fast, local_files_only=True)

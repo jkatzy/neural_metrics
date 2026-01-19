@@ -17,7 +17,14 @@ from .utils import (bert_cos_score_idf, cache_scibert, get_bert_embedding,
 
 __all__ = ["score", "plot_example"]
 
-def truncate(prefix: str, text: str, suffix: str, max_len: int, tokenizer) -> str:
+
+#TODO: Delete this for the final
+def _tokens_to_string(tokens, tokenizer):
+    if not tokens:
+        return ""
+    return tokenizer.convert_tokens_to_string(tokens)
+
+def truncate(prefix: str, text: str, suffix: str, max_len: int, tokenizer, return_separate: bool) -> str:
     max_len = max_len - 3  # account for special tokens
     pre_tokens = tokenizer.tokenize(prefix)
     suf_tokens = tokenizer.tokenize(suffix)
@@ -28,10 +35,22 @@ def truncate(prefix: str, text: str, suffix: str, max_len: int, tokenizer) -> st
     if token_budget <= 0:
         # No budget for prefix/suffix, truncate text only
         text_tokens = text_tokens[:max_len]
-        return tokenizer.convert_tokens_to_string(text_tokens)
+        if return_separate:
+            return (
+                    "",
+                    _tokens_to_string(text_tokens, tokenizer),
+                    ""
+                    )
+        return _tokens_to_string(text_tokens, tokenizer)
 
     if len(pre_tokens) + len(suf_tokens) + len(text_tokens) < max_len:
-        return tokenizer.convert_tokens_to_string(pre_tokens + text_tokens + suf_tokens)
+        if return_separate:
+            return (
+                    _tokens_to_string(pre_tokens, tokenizer),
+                    _tokens_to_string(text_tokens, tokenizer),
+                    _tokens_to_string(suf_tokens, tokenizer)
+                    )
+        return _tokens_to_string(pre_tokens + text_tokens + suf_tokens, tokenizer)
     # Do we need to truncate both sides
     half_budget = token_budget // 2
     n_pre_trunc = min(len(pre_tokens), half_budget)
@@ -46,7 +65,13 @@ def truncate(prefix: str, text: str, suffix: str, max_len: int, tokenizer) -> st
 
     tokens_pre_trunc = pre_tokens[-n_pre_trunc:]
     tokens_suf_trunc = suf_tokens[:n_suf_trunc]
-    return tokenizer.convert_tokens_to_string(tokens_pre_trunc + text_tokens + tokens_suf_trunc)
+    if return_separate:
+        return (
+                _tokens_to_string(tokens_pre_trunc, tokenizer),
+                _tokens_to_string(text_tokens, tokenizer),
+                _tokens_to_string(tokens_suf_trunc, tokenizer)
+                )
+    return _tokens_to_string(tokens_pre_trunc + text_tokens + tokens_suf_trunc, tokenizer)
 
 def score(
     cands,
