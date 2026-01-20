@@ -20,13 +20,26 @@ ENCODERS_FILE="encoders.txt"
 
 mkdir -p "${OUTPUT_DIR}"
 
+slugify() {
+  echo "$1" | tr ' /:' '_' | tr -cd '[:alnum:]_.-'
+}
+
 while IFS=',' read -r raw_model raw_lang; do
   model=$(echo "${raw_model}" | xargs)
   lang=$(echo "${raw_lang}" | xargs)
   [[ -z "${model}" ]] && continue
   safe_model=${model//\//_}
   safe_lang=${lang:-${LANG}}
-  output_csv="${OUTPUT_DIR}/bertscores_${safe_lang}_${safe_model}.csv"
+  safe_dataset=$(slugify "${DATASET}")
+  safe_config=$(slugify "${CONFIG:-none}")
+  safe_split=$(slugify "${SPLIT}")
+  safe_ref=$(slugify "${REF_FIELD}")
+  safe_id=$(slugify "${ID_FIELD:-none}")
+  safe_llms=$(slugify "${LLM_MODELS[*]:-all}")
+  safe_context=$(slugify "${USE_CONTEXT}")
+  safe_idf=$(slugify "${USE_IDF}")
+  settings="ds-${safe_dataset}_cfg-${safe_config}_split-${safe_split}_ref-${safe_ref}_lang-${safe_lang}_bs-${BATCH_SIZE}_ctx-${safe_context}_idf-${safe_idf}_id-${safe_id}_llms-${safe_llms}"
+  output_csv="${OUTPUT_DIR}/bertscores_${safe_lang}_${safe_model}_${settings}.csv"
 
   echo ">>> Running BERTScore for model=${model} lang=${safe_lang} -> ${output_csv}"
   python run_bertscore_dataset.py \
@@ -41,7 +54,6 @@ while IFS=',' read -r raw_model raw_lang; do
     ${ID_FIELD:+--id-field "${ID_FIELD}"} \
     --output-csv "${output_csv}" \
     --return-hash \
-    --use-context
-    # --idf ${USE_IDF} \
-    # --use-context ${USE_CONTEXT}
+    $([ "${USE_CONTEXT}" = true ] && echo "--use-context") \
+    $([ "${USE_IDF}" = true ] && echo "--idf")
 done < "${ENCODERS_FILE}"

@@ -191,8 +191,8 @@ def score(
         for cand, ref_text, cand_pre, cand_suf, rpre, rsuf in zip(
             cands, refs, cand_prefixes, cand_suffixes, prefixes, suffixes
         ):
-            affixed_ref = truncate(rpre, ref_text, rsuf, max_seq_length, tokenizer)
-            affixed_cand = truncate(cand_pre, cand, cand_suf, max_seq_length, tokenizer)
+            affixed_ref = truncate(rpre, ref_text, rsuf, max_seq_length, tokenizer, return_separate=False)
+            affixed_cand = truncate(cand_pre, cand, cand_suf, max_seq_length, tokenizer, return_separate=False)
 
             embed_cands.append(affixed_cand)
             embed_refs.append(affixed_ref)
@@ -227,9 +227,9 @@ def score(
             suffixes = _broadcast_affix(strip_suffix, suf_group, len(ref_group))
             cand_pre_tokens = _count_tokens(cand_pre)
             cand_suf_tokens = _count_tokens(cand_suf)
-            affixed_cand = truncate(cand_pre, cand, cand_suf, max_seq_length, tokenizer)
+            affixed_cand = truncate(cand_pre, cand, cand_suf, max_seq_length, tokenizer, return_separate=False)
             for ref_text, rpre, rsuf in zip(ref_group, prefixes, suffixes):
-                affixed_ref = truncate(rpre, ref_text, rsuf, max_seq_length, tokenizer)
+                affixed_ref = truncate(rpre, ref_text, rsuf, max_seq_length, tokenizer, return_separate=False)
                 embed_refs.append(affixed_ref)
                 ref_trim_heads.append(_count_tokens(rpre))
                 ref_trim_tails.append(_count_tokens(rsuf))

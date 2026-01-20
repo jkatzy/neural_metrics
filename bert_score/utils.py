@@ -251,6 +251,10 @@ def get_model(model_type, num_layers, all_layers=None):
     elif "t5" in model_type:
         from transformers import T5EncoderModel
         model = T5EncoderModel.from_pretrained(model_type)
+    elif "chinese-macbert" in model_type or "hfl/chinese-roberta-wwm-ext" in model_type or"hfl/chinese-bert-wwm-ext" in model_type:
+        model = AutoModel.from_pretrained(model_type, use_safetensors=False)
+    elif "chinese-modernbert-large-wwm" in model_type.lower():
+        model = AutoModel.from_pretrained(model_type, trust_remote_code=True)
     else:
         try:
             model = AutoModel.from_pretrained(model_type, add_pooling_layer=False)
@@ -332,7 +336,9 @@ def get_tokenizer(model_type, use_fast=False):
     if model_type.startswith("scibert"):
         model_type = cache_scibert(model_type)
 
-    if "modern" in model_type.lower():
+    if "chinese-modernbert-large-wwm" in model_type.lower():
+        return load_tokenizer_with_tokenizer_file(model_type)
+    elif "modern" in model_type.lower():
         return AutoTokenizer.from_pretrained(model_type, use_fast=True, model_max_length = 512)
     elif "roberta" in model_type:
         return AutoTokenizer.from_pretrained(model_type, use_fast=True, model_max_length = 512)
@@ -342,7 +348,7 @@ def get_tokenizer(model_type, use_fast=False):
         return load_tokenizer_with_codet5_patch(model_type, use_fast=use_fast)
     elif "polish-bart-base" in model_type.lower():
         return load_tokenizer_with_live_patch(model_type)
-
+    
     if version.parse(trans_version) >= version.parse("4.0.0"):
         if use_fast:
             try:
@@ -849,6 +855,7 @@ def cache_scibert(model_type, cache_folder="~/.cache/torch/transformers"):
 
 from huggingface_hub import snapshot_download
 from transformers import PreTrainedTokenizerFast
+from transformers.dynamic_module_utils import get_class_from_dynamic_module
 import re
 import json
 import os
@@ -1051,3 +1058,61 @@ def load_tokenizer_with_codet5_patch(
             raise
 
         return AutoTokenizer.from_pretrained(local_dir, use_fast=use_fast, local_files_only=True)
+
+
+def load_tokenizer_with_tokenizer_file(
+    model_name_or_path: str,
+    *,
+    cache_dir: str | os.PathLike | None = None,
+):
+    """
+    Load a fast tokenizer directly from tokenizer.json for custom remote tokenizers
+    that fail AutoTokenizer.from_pretrained.
+    """
+    cache_dir = _resolve_hf_cache_dir(cache_dir)
+    local_dir = snapshot_download(
+        repo_id=model_name_or_path,
+        cache_dir=cache_dir,
+        local_dir=None,
+        local_dir_use_symlinks=False,
+    )
+
+    tokenizer_config_path = Path(local_dir) / "tokenizer_config.json"
+    if not tokenizer_config_path.exists():
+        raise FileNotFoundError(f"Missing tokenizer_config.json in {local_dir}")
+
+    with tokenizer_config_path.open("r", encoding="utf-8") as f:
+        tok_cfg = json.load(f)
+
+    class_ref = None
+    auto_map = tok_cfg.get("auto_map", {})
+    if isinstance(auto_map, dict):
+        auto_tok = auto_map.get("AutoTokenizer")
+        if isinstance(auto_tok, list) and auto_tok:
+            class_ref = auto_tok[0]
+
+    if not class_ref:
+        raise ValueError(f"Missing AutoTokenizer entry in tokenizer_config.json for {model_name_or_path}")
+
+    tokenizer_class = get_class_from_dynamic_module(
+        class_ref,
+        model_name_or_path,
+        cache_dir=cache_dir,
+    )
+
+    tokenizer_file = Path(local_dir) / "tokenizer.json"
+    if not tokenizer_file.exists():
+        raise FileNotFoundError(f"Missing tokenizer.json in {local_dir}")
+
+    init_kwargs = {}
+    for key in ("unk_token", "sep_token", "pad_token", "cls_token", "mask_token", "bos_token", "eos_token"):
+        if key in tok_cfg:
+            init_kwargs[key] = tok_cfg[key]
+
+    tokenizer = tokenizer_class(tokenizer_file=str(tokenizer_file), **init_kwargs)
+    if "model_max_length" in tok_cfg:
+        tokenizer.model_max_length = tok_cfg["model_max_length"]
+    if not getattr(tokenizer, "name_or_path", None):
+        tokenizer.name_or_path = model_name_or_path
+
+    return tokenizer

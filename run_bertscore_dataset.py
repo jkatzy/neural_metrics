@@ -118,6 +118,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="./outputs/",
         help="Directory to save CSV with columns: cand, refs (JSON), P, R, F, filename is the hash",
     )
+    parser.add_argument(
+        "--output-csv",
+        required=False,
+        default=None,
+        help="Optional path to save CSV; overrides output-dir/hash filename when set.",
+    )
     parser.add_argument("--return-hash", action="store_true", help="Include hash code column in output")
     parser.add_argument("--multilingual", required=False, action="store_false", default="False", help=" Set to True if running a multilingual model, only used for hash and saving, default False")
     return parser
@@ -256,10 +262,16 @@ def main(argv=None):
         hash_code = _sanitize_hash_code(hash_code)
         df["hash"] = hash_code
 
-    out_dir = os.path.dirname(args.output_dir)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
-    df.to_csv(os.path.join(args.output_dir, hash_code) + ".csv", index=False)
+    if args.output_csv:
+        out_dir = os.path.dirname(args.output_csv)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        df.to_csv(args.output_csv, index=False)
+    else:
+        out_dir = os.path.dirname(args.output_dir)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        df.to_csv(os.path.join(args.output_dir, hash_code) + ".csv", index=False)
 
     avg_P = float(P.mean())
     avg_R = float(R.mean())
