@@ -330,7 +330,7 @@ def score(
                     rescale_with_baseline,
                     use_fast_tokenizer=use_fast_tokenizer,
                     use_context=use_context,
-                    multilingual = multilingual
+                    language=lang
                 ),
             ]
         )

@@ -190,7 +190,7 @@ def sent_encode(tokenizer, sent):
     sent = sent.strip()
     max_len = AutoConfig.from_pretrained(tokenizer.name_or_path).max_position_embeddings
     if sent == "":
-        return tokenizer.build_inputs_with_special_tokens([])
+        return tokenizer.encode("", add_special_tokens=True)
     elif isinstance(tokenizer, GPT2Tokenizer) or isinstance(tokenizer, RobertaTokenizer):
         # for RoBERTa and GPT-2
         if version.parse(trans_version) >= version.parse("4.0.0"):
@@ -787,7 +787,7 @@ def get_hash(
     rescale_with_baseline,
     use_fast_tokenizer,
     use_context,
-    multilingual
+    language,
 ):
     msg = "{}_L{}{}_version={}(hug_trans={})".format(
         model, num_layers, "_idf" if idf else "_no-idf", __version__, trans_version
@@ -804,10 +804,8 @@ def get_hash(
         msg += "_context"
     else:
         msg += "_no-context"
-    if multilingual:
-        msg += "_multilingual"
-    else:
-        msg += "_monolingual"
+    if language:
+        msg += f"_{language}"
     return msg
 
 

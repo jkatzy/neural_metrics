@@ -175,7 +175,7 @@ class BERTScorer:
             self.rescale_with_baseline,
             self.use_fast_tokenizer,
             self.use_context,
-            self.multilingual
+            self.lang
         )
 
     def compute_idf(self, sents):
