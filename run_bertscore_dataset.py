@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Union
 import pandas as pd
 from datasets import load_dataset
 from transformers import AutoConfig, AutoTokenizer
-from bert_score.utils import get_tokenizer
+from bert_score.utils import get_tokenizer, replace_with_noise, remove_overlap
 
 import bert_score
 
@@ -69,16 +69,6 @@ FIM_TOKEN_DICT = {'google/codegemma-7b': {'prefix': '<|fim_prefix|>', 'middle': 
                   'ibm-granite/granite-8b-code-base' :{'prefix': '<fim_prefix>', 'middle': '<fim_middle>', 'suffix': '<fim_suffix>'}}
 
 
-def remove_overlap(a, b):
-    max_overlap = 0
-    max_len = min(len(a), len(b))
-
-    for i in range(1, max_len + 1):
-        if a[-i:] == b[:i]:
-            max_overlap = i
-
-    return b[max_overlap:]
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Compute BERTScore for a Hugging Face dataset with per-sample affixes and save to CSV."
@@ -109,8 +99,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--id-field", default=None, help="Field name for a sample identifier (saved to CSV).")
     parser.add_argument(
         "--use-context",
-        action="store_true",
-        help="If true, adds context to the generted comments before scoring, default True.",
+        default=None,
+        choices=['none', 'minimal', 'full'],
+        help="If set, keep affixes in the text (do NOT strip prefixes/suffixes before scoring). Default strips them.",
     )
     parser.add_argument(
         "--output-dir",
@@ -126,6 +117,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--return-hash", action="store_true", help="Include hash code column in output")
     parser.add_argument("--multilingual", required=False, action="store_false", default="False", help=" Set to True if running a multilingual model, only used for hash and saving, default False")
+    parser.add_argument(
+        "--noise-type",
+        default=None,
+        choices=["uniform", "targeted"],
+        help="If set, replace candidate text with noise of the specified type before scoring. "
+                "'uniform' replaces with random tokens from the vocabulary, 'targeted' replaces with tokens from the context. Default is no noise.",
+    )
     return parser
 
 
@@ -135,7 +133,7 @@ def main(argv=None):
     args.return_hash = True
     # Fallback defaults to allow running without CLI args (handy for debugger).
     if args.dataset is None:
-        args.dataset = "AISE-TUDelft/multilingual-code-comments"
+        args.dataset = "AISE-TUDelft/multilingual-code-comments-fixed-2"
     if args.ref_field is None:
         args.ref_field = "original_comment"
     if args.model is None:
@@ -144,15 +142,7 @@ def main(argv=None):
     #     args.output_csv = "outputs/bertscores.csv"
     if args.config is None:
         args.config = "Greek"
-    # args.rescale_with_baseline = True
-    model_config = AutoConfig.from_pretrained(args.model)
-    validation_tokenizer = get_tokenizer(args.model)
 
-    args.use_context = True
-    # args.lang = "el"
-    # args.use_context = True
-    # if args.use_context is None:
-    # args.use_context = True
 
     ds = load_dataset(args.dataset, args.config, split=args.split)
 
@@ -177,6 +167,9 @@ def main(argv=None):
             context_field = f"masked_data_{llm}"
             cand = _get_field(rec, cand_field)
             context = _get_field(rec, context_field)
+            ref = ref.replace("_x000D_", "")
+            cand = cand.replace("_x000D_", "")
+            context = context.replace("_x000D_", "")
             if cand is None or context is None:
                 raise ValueError(f"Candidate or context field missing for LLM '{llm}'")
 
@@ -208,6 +201,9 @@ def main(argv=None):
             else:
                 ref_suf_list = [ref_suf] * len(ref_list)
 
+            if args.noise_type == 'uniform' or args.noise_type == 'targeted':
+                cand = replace_with_noise(cand, args.noise_type, args.checkpoint, context)
+
             cands.append(cand)
             refs.append(ref_list if len(ref_list) > 1 else ref_list[0])
             cand_prefixes.append(cand_pre)
@@ -217,7 +213,7 @@ def main(argv=None):
             ids.append(base_id)
             llm_labels.append(llm)
 
-    if not args.use_context:
+    if not args.use_context or args.use_context == 'none':
         # If not using context, clear all affixes, not very efficient but will not kill us, easy to implement here
         cand_prefixes = [""] * len(cand_prefixes)
         cand_suffixes = [""] * len(cand_suffixes)

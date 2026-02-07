@@ -7,6 +7,7 @@ from math import log
 from multiprocessing import Pool
 
 import torch
+import numpy as np
 from packaging import version
 from torch.nn.utils.rnn import pad_sequence
 from tqdm.auto import tqdm
@@ -183,6 +184,40 @@ model2layers = {
     "microsoft/deberta-v3-large": 12,  # 0.6927693082293821
     "khalidalt/DeBERTa-v3-large-mnli": 18,  # 0.7428756686018376
 }
+def remove_overlap(a, b):
+    max_overlap = 0
+    max_len = min(len(a), len(b))
+
+    for i in range(1, max_len + 1):
+        if a[-i:] == b[:i]:
+            max_overlap = i
+
+    return b[max_overlap:]
+
+def get_overlap(a, b):
+    ovr = remove_overlap(a, b)
+    return b.replace(ovr, "", 1)
+
+
+def replace_with_noise(text: str, noise_type: str, checkpoint: str, context: str) -> str:
+    if noise_type == "uniform":
+        tokenizer = get_tokenizer(checkpoint, use_fast=True)
+        token_options = tokenizer.get_vocab()
+        tokens = tokenizer.tokenize(text)
+        noisy_tokens = [token_options[np.random.choice(list(token_options.keys()))] for _ in tokens]
+        return tokenizer.convert_tokens_to_string(noisy_tokens)
+        
+    elif noise_type == "targeted":
+        if context is None:
+            raise ValueError("Context is required for targeted noise replacement")
+        tokenizer = get_tokenizer(checkpoint, use_fast=True)
+        context_tokens = tokenizer.tokenize(context)
+        tokens = tokenizer.tokenize(text)
+        noisy_tokens = [np.random.choice(context_tokens) if token in context_tokens else token for token in tokens]
+        return tokenizer.convert_tokens_to_string(noisy_tokens)
+
+    else:
+        raise ValueError(f"Unsupported noise type: {noise_type}")
 
 
 def sent_encode(tokenizer, sent):

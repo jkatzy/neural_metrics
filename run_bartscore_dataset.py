@@ -9,7 +9,8 @@ import torch
 from datasets import load_dataset
 
 from bart_score import BARTScorer
-from run_bertscore_dataset import remove_overlap
+
+from .utils import replace_with_noise, get_overlap, remove_overlap
 
 
 def _as_list(x: Union[str, List[str]]) -> List[str]:
@@ -55,7 +56,8 @@ def main():
     parser.add_argument("--batch-size", type=int, default=4, help="Batch size for scoring")
     parser.add_argument(
         "--use-context",
-        action="store_true",
+        default=None,
+        choices=['none', 'minimal', 'full'],
         help="If set, keep affixes in the text (do NOT strip prefixes/suffixes before scoring). Default strips them.",
     )
     parser.add_argument(
@@ -65,6 +67,13 @@ def main():
         help="Path to save CSV with columns: cand, refs (JSON), forward, reverse, and averaged BARTScores.",
     )
     parser.add_argument("--id-field", default="file_id", help="Field name for a sample identifier (saved to CSV).")
+    parser.add_argument(
+        "--noise-type",
+        default=None,
+        choices=["uniform", "targeted"],
+        help="If set, replace candidate text with noise of the specified type before scoring. "
+             "'uniform' replaces with random tokens from the vocabulary, 'targeted' replaces with tokens from the context. Default is no noise.",
+    )
     args = parser.parse_args()
 
     ds = load_dataset(args.dataset, args.config, split=args.split)
@@ -96,12 +105,20 @@ def main():
                 cand = ""
                 # raise ValueError(f"Candidate or context field missing for LLM '{llm}'")
 
+            ref = ref.replace("_x000D_", "")
+            cand = cand.replace("_x000D_", "")
+            context = context.replace("_x000D_", "")
+
             split_ctx = context.split(tokens["suffix"])
             if len(split_ctx) < 2:
                 split_ctx = ["",""]
                 # raise ValueError(f"Context for LLM '{llm}' does not contain suffix token")
             cand_pre = split_ctx[0].replace(tokens["prefix"], "")
             cand_suf = split_ctx[1].replace(tokens["middle"], "")
+
+            if args.use_context == 'minimal':
+                cand_pre = get_overlap(cand_pre, ref)
+                cand_suf = ""
 
             ref_pre = cand_pre
             ref_suf = cand_suf
@@ -121,6 +138,9 @@ def main():
             else:
                 ref_suf_list = [ref_suf] * len(ref_list)
 
+            if args.noise_type == 'uniform' or args.noise_type == 'targeted':
+                cand = replace_with_noise(cand, args.noise_type, args.checkpoint, context)
+            
             cands.append(cand)
             ref = remove_overlap(ref_pre, ref)
 
@@ -132,7 +152,7 @@ def main():
             ids.append(base_id)
             llm_labels.append(llm)
 
-    if args.use_context:
+    if not args.use_context or args.use_context == 'none':
         cand_prefixes = ["" for _ in cands]
         cand_suffixes = ["" for _ in cands]
         ref_prefixes = [([""] * len(r) if isinstance(r, list) else "") for r in refs]
